@@ -50,7 +50,10 @@ class ApifyJobScraper:
                 raise first_error
                 
         # Retrieve items from the run's dataset
-        dataset_id = run.get("defaultDatasetId")
+        dataset_id = getattr(run, "default_dataset_id", None)
+        if not dataset_id and isinstance(run, dict):
+            dataset_id = run.get("defaultDatasetId") or run.get("default_dataset_id")
+            
         if not dataset_id:
             print("No dataset ID found in Apify run output.")
             return []
