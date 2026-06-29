@@ -50,6 +50,22 @@ class ApifyJobScraper:
         try:
             # Call the actor and wait for it to finish
             run = self.client.actor(actor_id).call(run_input=run_input)
+        except Exception as e:
+            error_str = str(e)
+            # If the error suggests 'query' is required, retry with 'query' parameter
+            if "query" in error_str.lower() or "input" in error_str.lower():
+                print(f"First attempt failed: {e}. Retrying with 'query' instead of 'queries'...")
+                fallback_input = {
+                    "query": query,
+                    "maxItems": limit
+                }
+                try:
+                    run = self.client.actor(actor_id).call(run_input=fallback_input)
+                except Exception as fallback_err:
+                    print(f"Fallback attempt also failed: {fallback_err}")
+                    raise fallback_err
+            else:
+                raise e
             
             # Retrieve items from the run's dataset
             dataset_id = run.get("defaultDatasetId")
