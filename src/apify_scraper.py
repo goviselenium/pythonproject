@@ -20,67 +20,47 @@ class ApifyJobScraper:
                 "or provide it via the Streamlit dashboard."
             )
         
-        # Determine actor and prepare input schema
-        # Supported actors:
-        # - johnvc/google-jobs-scraper
-        # - apify/google-jobs-scraper
-        # - veeronica/google-jobs-scraper
-        
-        run_input = {}
-        if "google-jobs-scraper" in actor_id:
-            # Most google jobs scrapers accept queries as an array or newline-separated string
-            # and limit parameters like maxItems or maxPages
-            run_input = {
-                "queries": query,
-                "maxItems": limit,
-            }
-            # Add specific variations if needed
-            if actor_id == "johnvc/google-jobs-scraper":
-                # johnvc scraper inputs
-                run_input["maxPagesPerQuery"] = max(1, limit // 10)
-        else:
-            # Generic fallback
-            run_input = {
-                "queries": [query] if isinstance(query, str) else query,
-                "maxItems": limit
-            }
+        # Prepare inputs
+        run_input = {
+            "queries": query,
+            "maxItems": limit,
+        }
+        if actor_id == "johnvc/google-jobs-scraper":
+            run_input["maxPagesPerQuery"] = max(1, limit // 10)
+            
+        fallback_input = {
+            "query": query,
+            "maxItems": limit
+        }
 
         print(f"Triggering Apify Actor '{actor_id}' with input: {run_input}")
         
+        run = None
+        first_error = None
         try:
             # Call the actor and wait for it to finish
             run = self.client.actor(actor_id).call(run_input=run_input)
         except Exception as e:
-            error_str = str(e)
-            # If the error suggests 'query' is required, retry with 'query' parameter
-            if "query" in error_str.lower() or "input" in error_str.lower():
-                print(f"First attempt failed: {e}. Retrying with 'query' instead of 'queries'...")
-                fallback_input = {
-                    "query": query,
-                    "maxItems": limit
-                }
-                try:
-                    run = self.client.actor(actor_id).call(run_input=fallback_input)
-                except Exception as fallback_err:
-                    print(f"Fallback attempt also failed: {fallback_err}")
-                    raise fallback_err
-            else:
-                raise e
-            
-            # Retrieve items from the run's dataset
-            dataset_id = run.get("defaultDatasetId")
-            if not dataset_id:
-                print("No dataset ID found in Apify run output.")
-                return []
+            first_error = e
+            print(f"Primary scraping attempt failed: {e}. Retrying with 'query' instead of 'queries'...")
+            try:
+                run = self.client.actor(actor_id).call(run_input=fallback_input)
+            except Exception as fallback_err:
+                print(f"Fallback scraping attempt also failed: {fallback_err}")
+                raise first_error
                 
+        # Retrieve items from the run's dataset
+        dataset_id = run.get("defaultDatasetId")
+        if not dataset_id:
+            print("No dataset ID found in Apify run output.")
+            return []
+            
+        try:
             items = list(self.client.dataset(dataset_id).iterate_items())
             print(f"Scraped {len(items)} raw listings from Apify.")
-            
-            # Map the raw items to our unified job schema
             return self._normalize_items(items)
-            
         except Exception as e:
-            print(f"Failed to scrape jobs from Apify: {e}")
+            print(f"Failed to retrieve or normalize items: {e}")
             raise e
 
     def _normalize_items(self, raw_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
